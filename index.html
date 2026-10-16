@@ -38,6 +38,13 @@
   }
   </script>
 
+if (typeof XRWebGLBinding !== 'undefined' && XRWebGLBinding.prototype) {
+  delete XRWebGLBinding.prototype.createProjectionLayer;
+}
+if (typeof XRRenderState !== 'undefined' && XRRenderState.prototype) {
+  delete XRRenderState.prototype.layers;
+}
+
   <script type="module">
     import * as THREE from 'three';
 
@@ -279,10 +286,6 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    renderer.setAnimationLoop((t, frame) => {
-      if (frame) onXRFrame(t, frame);
-      else renderer.render(scene, camera);
-    });
   </script>
 </body>
 </html>
