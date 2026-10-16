@@ -23,15 +23,6 @@
     const button = document.getElementById('start');
     const status = document.getElementById('status');
 
-    if (navigator.xr) {
-      if (window.XRWebGLBinding?.prototype?.createProjectionLayer) {
-        delete XRWebGLBinding.prototype.createProjectionLayer;
-      }
-      if (window.XRRenderState?.prototype?.layers) {
-        delete XRRenderState.prototype.layers;
-      }
-    }
-
     try {
       const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js');
       const scene = new THREE.Scene();
