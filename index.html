@@ -92,7 +92,6 @@
       marker.visible = false;
       scene.add(marker);
 
-      
       let template = null;
 
       const loader = new GLTFLoader();
@@ -126,35 +125,44 @@
 
       let hitTestSource = null;
       let referenceSpace = null;
-
       let lastPlacement = -Infinity;
 
       function placeObject() {
-  	if (!renderer.xr.isPresenting || !marker.visible || !template) return;
+        if (!renderer.xr.isPresenting || !marker.visible || !template) return;
 
-  	const now = performance.now();
-  	if (now - lastPlacement < 250) return;
+        const now = performance.now();
+        if (now - lastPlacement < 250) return;
 
-  	lastPlacement = now;
+        lastPlacement = now;
 
-  	const object = new THREE.Group();
+        const object = new THREE.Group();
 
-  	marker.matrix.decompose(
-   	  object.position,
-   	  object.quaternion,
-   	  object.scale
-  	);
- 	object.add(template.clone(true));
- 	objects.add(object);
+        const position = new THREE.Vector3();
+        const quaternion = new THREE.Quaternion();
+        const scale = new THREE.Vector3();
+
+        marker.matrix.decompose(position, quaternion, scale);
+
+        object.position.copy(position);
+        object.quaternion.copy(quaternion);
+        object.scale.set(1, 1, 1);
+
+        object.add(template.clone(true));
+        objects.add(object);
       }
 
       const controller = renderer.xr.getController(0);
       controller.addEventListener('select', placeObject);
       scene.add(controller);
 
+      renderer.domElement.addEventListener('click', (event) => {
+        if (panel.contains(event.target)) return;
+        placeObject();
+      });
+
       window.addEventListener('click', (event) => {
-	if (panel.contains(event.target)) return;
-	placeObject();
+        if (panel.contains(event.target)) return;
+        placeObject();
       });
 
       button.addEventListener('click', async () => {
@@ -166,7 +174,8 @@
 
         try {
           session = await navigator.xr.requestSession('immersive-ar', {
-            requiredFeatures: ['hit-test', 'local-floor']
+            requiredFeatures: ['hit-test'],
+            optionalFeatures: ['local-floor']
           });
 
           session.addEventListener('end', () => {
@@ -181,11 +190,17 @@
           stage = 'Подключение рендерера';
           await renderer.xr.setSession(session);
 
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+
+          stage = 'Получение reference space';
           referenceSpace = renderer.xr.getReferenceSpace();
 
+          if (!referenceSpace) {
+            referenceSpace = await session.requestReferenceSpace('local-floor');
+          }
+
           stage = 'Получение пространства viewer';
-          const viewerSpace =
-            await session.requestReferenceSpace('viewer');
+          const viewerSpace = await session.requestReferenceSpace('viewer');
 
           stage = 'Создание hit-test';
           hitTestSource = await session.requestHitTestSource({
