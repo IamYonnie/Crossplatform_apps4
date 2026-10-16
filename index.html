@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AR: размещение кубов</title>
+  <title>AR: размещение собачек</title>
   <style>
     body {
       margin: 0;
@@ -33,11 +33,21 @@
       line-height: 1.5;
     }
   </style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
 </head>
 <body>
   <div id="panel">
-    <h1>Размещение кубов в AR</h1>
-    <p>Наведите камеру на поверхность. Когда появится кольцо, нажмите на экран, чтобы добавить куб.</p>
+    <h1>Размещение собачек в AR</h1>
+    <p>Наведите камеру на поверхность. Когда появится кольцо, нажмите на экран, чтобы добавить собачку.</p>
     <button id="start" disabled>Загрузка...</button>
     <p id="status"></p>
   </div>
@@ -48,9 +58,8 @@
     const panel = document.getElementById('panel');
 
     try {
-      const THREE = await import(
-        'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js'
-      );
+      const THREE = await import('three');
+      const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(
@@ -83,14 +92,34 @@
       marker.visible = false;
       scene.add(marker);
 
-      const template = new THREE.Mesh(
-        new THREE.BoxGeometry(0.15, 0.15, 0.15)
-          .translate(0, 0.075, 0),
-        new THREE.MeshStandardMaterial({
-          color: 0x4488ff,
-          roughness: 0.7
-        })
-      );
+      
+      let template = null;
+
+      const loader = new GLTFLoader();
+
+      loader.load('./chihuahua_derp_dog.glb', (gltf) => {
+        const model = gltf.scene;
+
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const maxSize = Math.max(size.x, size.y, size.z);
+
+        if (maxSize > 0) {
+          model.scale.setScalar(0.15 / maxSize);
+        }
+
+        box.setFromObject(model);
+
+        const center = box.getCenter(new THREE.Vector3());
+
+        model.position.x -= center.x;
+        model.position.y -= box.min.y;
+        model.position.z -= center.z;
+
+        template = model;
+      }, undefined, (error) => {
+        status.textContent = 'Ошибка загрузки модели: ' + error.message;
+      });
 
       const objects = new THREE.Group();
       scene.add(objects);
@@ -101,21 +130,21 @@
       let lastPlacement = -Infinity;
 
       function placeObject() {
-  	if (!renderer.xr.isPresenting || !marker.visible) return;
+  	if (!renderer.xr.isPresenting || !marker.visible || !template) return;
 
   	const now = performance.now();
   	if (now - lastPlacement < 250) return;
 
   	lastPlacement = now;
 
-  	const object = template.clone();
+  	const object = new THREE.Group();
 
   	marker.matrix.decompose(
    	  object.position,
    	  object.quaternion,
    	  object.scale
   	);
-
+ 	object.add(template.clone(true));
  	objects.add(object);
       }
 
