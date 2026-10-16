@@ -98,21 +98,35 @@
       let hitTestSource = null;
       let referenceSpace = null;
 
+      let lastPlacement = -Infinity;
+
+      function placeObject() {
+  	if (!renderer.xr.isPresenting || !marker.visible) return;
+
+  	const now = performance.now();
+  	if (now - lastPlacement < 250) return;
+
+  	lastPlacement = now;
+
+  	const object = template.clone();
+
+  	marker.matrix.decompose(
+   	  object.position,
+   	  object.quaternion,
+   	  object.scale
+  	);
+
+ 	objects.add(object);
+      }
+
       const controller = renderer.xr.getController(0);
-
-      controller.addEventListener('select', () => {
-        if (!marker.visible) return;
-
-        const object = template.clone();
-        marker.matrix.decompose(
-          object.position,
-          object.quaternion,
-          object.scale
-        );
-        objects.add(object);
-      });
-
+      controller.addEventListener('select', placeObject);
       scene.add(controller);
+
+      window.addEventListener('click', (event) => {
+	if (panel.contains(event.target)) return;
+	placeObject();
+      });
 
       button.addEventListener('click', async () => {
         button.disabled = true;
