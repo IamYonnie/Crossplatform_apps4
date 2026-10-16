@@ -5,38 +5,63 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AR: размещение кубов</title>
   <style>
-    body { margin: 0; font-family: Arial, sans-serif; background: #eee; }
-    canvas { display: block; }
-    #panel { position: absolute; top: 24px; left: 20px; right: 20px; text-align: center; }
-    button { padding: 12px 24px; font-size: 18px; cursor: pointer; }
-    p { line-height: 1.5; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #eeeeee;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #panel {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      right: 20px;
+      text-align: center;
+    }
+
+    button {
+      padding: 12px 24px;
+      font-size: 18px;
+      cursor: pointer;
+    }
+
+    p {
+      line-height: 1.5;
+    }
   </style>
 </head>
 <body>
   <div id="panel">
     <h1>Размещение кубов в AR</h1>
-    <p>Нажмите «Запустить AR» и медленно наведите камеру на пол или стол.<br>Когда появится кольцо, коснитесь экрана, чтобы добавить куб.</p>
-    <button id="start" disabled>Проверка поддержки AR...</button>
+    <p>Наведите камеру на поверхность. Когда появится кольцо, нажмите на экран, чтобы добавить куб.</p>
+    <button id="start" disabled>Загрузка...</button>
     <p id="status"></p>
   </div>
+
   <script type="module">
     const button = document.getElementById('start');
     const status = document.getElementById('status');
-
-    if (navigator.xr) {
-      if (window.XRWebGLBinding?.prototype?.createProjectionLayer) {
-        delete XRWebGLBinding.prototype.createProjectionLayer;
-      }
-      if (window.XRRenderState?.prototype?.layers) {
-        delete XRRenderState.prototype.layers;
-      }
-    }
+    const panel = document.getElementById('panel');
 
     try {
-      const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js');
+      const THREE = await import(
+        'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js'
+      );
+
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      const camera = new THREE.PerspectiveCamera(
+        70, innerWidth / innerHeight, 0.01, 100
+      );
+
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true
+      });
+
       renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
       renderer.setSize(innerWidth, innerHeight);
       renderer.xr.enabled = true;
@@ -46,68 +71,114 @@
       scene.add(new THREE.HemisphereLight(0xffffff, 0x555555, 3));
 
       const marker = new THREE.Mesh(
-        new THREE.RingGeometry(0.07, 0.09, 32).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0x00cc88, side: THREE.DoubleSide })
+        new THREE.RingGeometry(0.07, 0.09, 32)
+          .rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({
+          color: 0x00cc88,
+          side: THREE.DoubleSide
+        })
       );
+
       marker.matrixAutoUpdate = false;
       marker.visible = false;
       scene.add(marker);
 
       const template = new THREE.Mesh(
-        new THREE.BoxGeometry(0.15, 0.15, 0.15).translate(0, 0.075, 0),
-        new THREE.MeshStandardMaterial({ color: 0x4488ff, roughness: 0.7 })
+        new THREE.BoxGeometry(0.15, 0.15, 0.15)
+          .translate(0, 0.075, 0),
+        new THREE.MeshStandardMaterial({
+          color: 0x4488ff,
+          roughness: 0.7
+        })
       );
+
       const objects = new THREE.Group();
       scene.add(objects);
+
       let hitTestSource = null;
       let referenceSpace = null;
 
-      function placeObject() {
+      const controller = renderer.xr.getController(0);
+
+      controller.addEventListener('select', () => {
         if (!marker.visible) return;
+
         const object = template.clone();
-        object.matrixAutoUpdate = false;
-        object.matrix.copy(marker.matrix);
+        marker.matrix.decompose(
+          object.position,
+          object.quaternion,
+          object.scale
+        );
         objects.add(object);
-      }
+      });
+
+      scene.add(controller);
 
       button.addEventListener('click', async () => {
         button.disabled = true;
         status.textContent = '';
-        let session;
+
+        let session = null;
+        let stage = 'Запуск AR-сессии';
+
         try {
           session = await navigator.xr.requestSession('immersive-ar', {
-            requiredFeatures: ['hit-test']
+            requiredFeatures: ['hit-test', 'local-floor']
           });
+
           session.addEventListener('end', () => {
-            hitTestSource?.cancel();
             hitTestSource = null;
             referenceSpace = null;
             marker.visible = false;
             objects.clear();
+            panel.hidden = false;
             button.disabled = false;
           }, { once: true });
+
+          stage = 'Подключение рендерера';
           await renderer.xr.setSession(session);
+
           referenceSpace = renderer.xr.getReferenceSpace();
-          const viewerSpace = await session.requestReferenceSpace('viewer');
-          hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-          session.addEventListener('select', placeObject);
+
+          stage = 'Получение пространства viewer';
+          const viewerSpace =
+            await session.requestReferenceSpace('viewer');
+
+          stage = 'Создание hit-test';
+          hitTestSource = await session.requestHitTestSource({
+            space: viewerSpace
+          });
+
+          panel.hidden = true;
         } catch (error) {
-          if (session) await session.end().catch(() => {});
-          status.textContent = 'Не удалось запустить AR: ' + error.message;
+          if (session) {
+            await session.end().catch(() => {});
+          }
+
+          panel.hidden = false;
           button.disabled = false;
+          status.textContent =
+            stage + ': ' + error.name + '. ' + error.message;
         }
       });
 
       renderer.setAnimationLoop((time, frame) => {
         marker.visible = false;
+
         if (frame && hitTestSource && referenceSpace) {
           const results = frame.getHitTestResults(hitTestSource);
-          const pose = results[0]?.getPose(referenceSpace);
-          if (pose) {
-            marker.matrix.fromArray(pose.transform.matrix);
-            marker.visible = true;
+
+          if (results.length > 0) {
+            const pose = results[0].getPose(referenceSpace);
+
+            if (pose) {
+              marker.matrix.fromArray(pose.transform.matrix);
+              marker.matrixWorldNeedsUpdate = true;
+              marker.visible = true;
+            }
           }
         }
+
         renderer.render(scene, camera);
       });
 
@@ -117,14 +188,31 @@
         renderer.setSize(innerWidth, innerHeight);
       });
 
-      const supported = window.isSecureContext && navigator.xr &&
-        await navigator.xr.isSessionSupported('immersive-ar');
-      button.disabled = !supported;
-      button.textContent = supported ? 'Запустить AR' : 'AR не поддерживается';
-      if (!supported) status.textContent = 'Откройте HTTPS-сайт в Chrome на устройстве Android с поддержкой WebXR AR.';
+      if (!window.isSecureContext) {
+        button.textContent = 'Нужен HTTPS';
+        status.textContent = 'Откройте опубликованный сайт GitHub Pages.';
+      } else if (!navigator.xr) {
+        button.textContent = 'WebXR недоступен';
+        status.textContent =
+          'Проверьте, включён ли эмулятор для этого сайта, и обновите страницу.';
+      } else {
+        const supported =
+          await navigator.xr.isSessionSupported('immersive-ar');
+
+        button.disabled = !supported;
+        button.textContent = supported
+          ? 'Запустить AR'
+          : 'AR не поддерживается';
+
+        if (!supported) {
+          status.textContent =
+            'Проверьте режим AR и настройки эмулятора для этого сайта.';
+        }
+      }
     } catch (error) {
-      button.textContent = 'Ошибка запуска';
-      status.textContent = error.message;
+      button.disabled = true;
+      button.textContent = 'Ошибка загрузки';
+      status.textContent = error.name + ': ' + error.message;
     }
   </script>
 </body>
