@@ -1,240 +1,121 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>WebAR Hit-Test Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AR: размещение кубов</title>
   <style>
-    body { margin: 0; overflow: hidden; font-family: sans-serif; background: #111; }
-    #info {
-      position: absolute;
-      top: 20px; left: 20px;
-      color: white;
-      background: rgba(0,0,0,0.7);
-      padding: 10px 15px;
-      border-radius: 8px;
-      pointer-events: none;
-      z-index: 100;
-      font-size: 14px;
-    }
-    #ar-button {
-      position: absolute;
-      bottom: 20px; left: 50%;
-      transform: translateX(-50%);
-      padding: 14px 28px;
-      background: #4285f4;
-      color: white;
-      border: none;
-      border-radius: 24px;
-      font-size: 16px;
-      cursor: pointer;
-      z-index: 100;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    }
-    #ar-button:hover { background: #357ae8; }
-    #error {
-      position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      color: #ff6b6b;
-      background: #000;
-      padding: 20px;
-      border-radius: 8px;
-      max-width: 80%;
-      font-family: monospace;
-      font-size: 12px;
-      white-space: pre-wrap;
-      z-index: 200;
-      display: none;
-    }
+    body { margin: 0; font-family: Arial, sans-serif; background: #eee; }
+    canvas { display: block; }
+    #panel { position: absolute; top: 24px; left: 20px; right: 20px; text-align: center; }
+    button { padding: 12px 24px; font-size: 18px; cursor: pointer; }
+    p { line-height: 1.5; }
   </style>
 </head>
 <body>
-  <div id="info">Tap to place an object on the floor</div>
-  <button id="ar-button">Start AR</button>
-  <div id="error"></div>
-
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-      }
-    }
-  </script>
-
+  <div id="panel">
+    <h1>Размещение кубов в AR</h1>
+    <p>Нажмите «Запустить AR» и медленно наведите камеру на пол или стол.<br>Когда появится кольцо, коснитесь экрана, чтобы добавить куб.</p>
+    <button id="start" disabled>Проверка поддержки AR...</button>
+    <p id="status"></p>
+  </div>
   <script type="module">
-    const errorEl = document.getElementById('error');
-    function showError(msg) {
-      errorEl.style.display = 'block';
-      errorEl.textContent = 'ERROR:\n' + msg;
-      console.error(msg);
-    }
+    const button = document.getElementById('start');
+    const status = document.getElementById('status');
 
-    window.addEventListener('error', (e) => showError(e.message));
-    window.addEventListener('unhandledrejection', (e) => showError(String(e.reason)));
-
-    let THREE;
     try {
-      THREE = await import('three');
-      console.log('Three.js loaded:', THREE.REVISION);
-    } catch (e) {
-      showError('Failed to load Three.js: ' + e.message);
-      throw e;
-    }
-
-    let camera, scene, renderer;
-    let controller;
-    let reticle;
-    let hitTestSource = null;
-    let hitTestSourceRequested = false;
-    let referenceSpace = null;
-    const placedObjects = [];
-
-    init();
-    animate();
-
-    function init() {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js');
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
       renderer.xr.enabled = true;
+      renderer.xr.setReferenceSpaceType('local-floor');
       document.body.appendChild(renderer.domElement);
 
-      scene = new THREE.Scene();
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x555555, 3));
 
-      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+      const marker = new THREE.Mesh(
+        new THREE.RingGeometry(0.07, 0.09, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x00cc88, side: THREE.DoubleSide })
+      );
+      marker.matrixAutoUpdate = false;
+      marker.visible = false;
+      scene.add(marker);
 
-      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-      light.position.set(0.5, 1, 0.25);
-      scene.add(light);
+      const template = new THREE.Mesh(
+        new THREE.BoxGeometry(0.15, 0.15, 0.15).translate(0, 0.075, 0),
+        new THREE.MeshStandardMaterial({ color: 0x4488ff, roughness: 0.7 })
+      );
+      const objects = new THREE.Group();
+      scene.add(objects);
+      let hitTestSource = null;
+      let referenceSpace = null;
 
-      const ringGeometry = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
-      const ringMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.7, transparent: true });
-      reticle = new THREE.Mesh(ringGeometry, ringMaterial);
-      reticle.matrixAutoUpdate = false;
-      reticle.visible = false;
-      scene.add(reticle);
-
-      controller = renderer.xr.getController(0);
-      controller.addEventListener('select', onSelect);
-      scene.add(controller);
-
-      renderer.xr.addEventListener('sessionstart', onSessionStart);
-      renderer.xr.addEventListener('sessionend', onSessionEnd);
-
-      const customButton = document.getElementById('ar-button');
-      customButton.addEventListener('click', startAR);
-
-      window.addEventListener('resize', onWindowResize);
-    }
-
-    async function startAR() {
-      if (!navigator.xr) {
-        showError('WebXR not supported. Use Chrome on Android or the WebXR Emulator.');
-        return;
+      function placeObject() {
+        if (!marker.visible) return;
+        const object = template.clone();
+        object.matrixAutoUpdate = false;
+        object.matrix.copy(marker.matrix);
+        objects.add(object);
       }
 
-      const supported = await navigator.xr.isSessionSupported('immersive-ar');
-      if (!supported) {
-        showError('immersive-ar not supported on this device.');
-        return;
-      }
-
-      try {
-        const session = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['hit-test'],
-          optionalFeatures: ['local-floor', 'dom-overlay'],
-          domOverlay: { root: document.getElementById('info') }
-        });
-        await renderer.xr.setSession(session);
-      } catch (e) {
-        showError('Failed to start AR session: ' + e.message);
-      }
-    }
-
-    function onSessionStart() {
-      const session = renderer.xr.getSession();
-
-      session.requestReferenceSpace('viewer').then((space) => {
-        session.requestHitTestSource({ space: space }).then((source) => {
-          hitTestSource = source;
-        });
-      });
-
-      session.requestReferenceSpace('local-floor').then((space) => {
-        referenceSpace = space;
-      });
-
-      document.getElementById('ar-button').style.display = 'none';
-    }
-
-    function onSessionEnd() {
-      hitTestSource = null;
-      hitTestSourceRequested = false;
-      referenceSpace = null;
-      if (reticle) reticle.visible = false;
-      document.getElementById('ar-button').style.display = 'block';
-    }
-
-    function onSelect() {
-      if (reticle.visible && referenceSpace) {
-        const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-        const material = new THREE.MeshStandardMaterial({
-          color: Math.random() * 0xffffff,
-          roughness: 0.5,
-          metalness: 0.5
-        });
-        const mesh = new THREE.Mesh(geometry, material);
-        const position = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
-        mesh.position.copy(position);
-        scene.add(mesh);
-        placedObjects.push(mesh);
-      }
-    }
-
-    function onWindowResize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    function animate() {
-      renderer.setAnimationLoop(render);
-    }
-
-    function render(timestamp, frame) {
-      if (frame && !hitTestSourceRequested) {
-        const session = renderer.xr.getSession();
-        if (session) {
-          session.requestReferenceSpace('viewer').then((space) => {
-            session.requestHitTestSource({ space: space }).then((source) => {
-              hitTestSource = source;
-            });
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        status.textContent = '';
+        let session;
+        try {
+          session = await navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['hit-test', 'local-floor']
           });
-          hitTestSourceRequested = true;
+          session.addEventListener('end', () => {
+            hitTestSource?.cancel();
+            hitTestSource = null;
+            referenceSpace = null;
+            marker.visible = false;
+            objects.clear();
+            button.disabled = false;
+          }, { once: true });
+          await renderer.xr.setSession(session);
+          referenceSpace = renderer.xr.getReferenceSpace();
+          const viewerSpace = await session.requestReferenceSpace('viewer');
+          hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+          session.addEventListener('select', placeObject);
+        } catch (error) {
+          if (session) await session.end().catch(() => {});
+          status.textContent = 'Не удалось запустить AR: ' + error.message;
+          button.disabled = false;
         }
-      }
+      });
 
-      if (frame && hitTestSource && referenceSpace) {
-        const hitTestResults = frame.getHitTestResults(hitTestSource);
-
-        if (hitTestResults.length > 0) {
-          const hit = hitTestResults[0];
-          const pose = hit.getPose(referenceSpace);
-
+      renderer.setAnimationLoop((time, frame) => {
+        marker.visible = false;
+        if (frame && hitTestSource && referenceSpace) {
+          const results = frame.getHitTestResults(hitTestSource);
+          const pose = results[0]?.getPose(referenceSpace);
           if (pose) {
-            reticle.visible = true;
-            reticle.matrix.fromArray(pose.transform.matrix);
-          } else {
-            reticle.visible = false;
+            marker.matrix.fromArray(pose.transform.matrix);
+            marker.visible = true;
           }
-        } else {
-          reticle.visible = false;
         }
-      }
+        renderer.render(scene, camera);
+      });
 
-      renderer.render(scene, camera);
+      window.addEventListener('resize', () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+      });
+
+      const supported = window.isSecureContext && navigator.xr &&
+        await navigator.xr.isSessionSupported('immersive-ar');
+      button.disabled = !supported;
+      button.textContent = supported ? 'Запустить AR' : 'AR не поддерживается';
+      if (!supported) status.textContent = 'Откройте HTTPS-сайт в Chrome на устройстве Android с поддержкой WebXR AR.';
+    } catch (error) {
+      button.textContent = 'Ошибка запуска';
+      status.textContent = error.message;
     }
   </script>
 </body>
